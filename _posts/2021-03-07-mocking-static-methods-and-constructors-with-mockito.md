@@ -29,19 +29,26 @@ We will also add assertj and junit dependencies. See [pom.xml](https://github.co
 # Mocking Static Methods
 To mock static methods on Foo class, simply call mockito's `mockStatic()` method:
 ```java
-assertEquals("originalRealValue", Foo.staticMethod());
-try (MockedStatic mocked = mockStatic(Foo.class)) {
-    mocked.when(Foo::staticMethod).thenReturn("fakeMockValue");
+// original unmocked behavior
+assertThat(Foo.stringReturningStaticMethod())
+        .isEqualTo("originalRealValue");
 
-    // Foo.staticMethod() behavior is changed only within this try scope
-    assertEquals("fakeMockValue", Foo.staticMethod());
+// mock static methods on Foo.class
+try (MockedStatic<Foo> mocked = mockStatic(Foo.class)) {
+    mocked.when(Foo::stringReturningStaticMethod)
+            .thenReturn("fakeMockValue");
 
-    // (optional) verify that Foo.staticMethod() was called
-    mocked.verify(Foo::staticMethod);
+    // Foo.stringReturningStaticMethod() behavior is changed only within this try scope
+    assertThat(Foo.stringReturningStaticMethod())
+            .isEqualTo("fakeMockValue");
+
+    // (optional) verify that Foo.stringReturningStaticMethod() was called
+    mocked.verify(Foo::stringReturningStaticMethod);
 }
 
-// staticMethod() behavior reverts to normal after exiting try scope
-assertEquals("originalRealValue", Foo.staticMethod());
+// stringReturningStaticMethod() behavior reverts to original unmocked behavior after exiting try scope
+assertThat(Foo.stringReturningStaticMethod())
+        .isEqualTo("originalRealValue");
 ```
 
 Let's look at a couple of examples for clarity.
@@ -71,6 +78,8 @@ Perhaps you could introduce an indirection with `System.getProperty()`:
 ```java
 Path path = Paths.get(System.getProperty("hosts.file", "/etc/hosts"));
 ```
+In your tests, you could then override the system property to point to a temporary file.
+<br>
 <br>
 
 Or convert the static method to an instance method where /etc/hosts would be an instance variable:
@@ -82,21 +91,25 @@ public class EtcHostsLoader {
         this(Paths.get("/etc/hosts"));
     }
 
-    EtcHostsLoader(Path etcHosts) {
+    public EtcHostsLoader(Path etcHosts) {
         this.etcHosts = etcHosts;
     }
 
-    public List<String> findEtcHostsMappings(String ipAddress) throws IOException {
-        ...
-    }
+    ...
 }
 ```
+In your tests, you could then call the package-private constructor with a temporary file argument.
+<br>
 <br>
 
 Or perhaps inject a `FileSystem` from which a hardwired path could be obtained:
 ```
 public class EtcHostsLoader {}
     private FileSystem fileSystem;
+
+    public EtcHostsLoader() {
+        this(FileSystems.getDefault());
+    }
 
     public EtcHostsLoader(FileSystem fileSystem) {
         this.fileSystem = fileSystem;
@@ -111,7 +124,7 @@ public class EtcHostsLoader {}
 In your tests, you could then inject a fake or [in-memory FileSystem](https://github.com/google/jimfs).
 
 #### Solution
-More easily though, we could mock `Paths.get()` method:
+More easily though, we could mock `Paths.get()` static method. Here is the JUnit5 test:
 ```java
 public class EtcHostsUtilsTest {
 
@@ -137,6 +150,23 @@ public class EtcHostsUtilsTest {
     }
 }
 ```
+With this approach, we are able to keep the production `EtcHostsUtils` code simple without having to add hooks or abstractions just for testing.
+
+### Default Values
+Recall that when mocking on instances, the all unmocked instance methods return default values:
+```java
+Foo fooInstance = mock(Foo.class);
+assertThat(fooInstance.stringReturningInstanceMethod()).isNull();
+assertThat(fooInstance.intReturningInstanceMethod()).isEqualTo(0);
+```
+
+Note that static methods, when the class is static-mocked, show similar behavior:
+```
+try (MockedStatic<Foo> mocked = mockStatic(Foo.class)) {
+    assertThat(Foo.stringReturningStaticMethod()).isNull();
+    assertThat(Foo.intReturningStaticMethod()).isEqualTo(0);
+}
+```
 
 ### Example Problem: java.time
 
@@ -152,7 +182,7 @@ public class DateTimeUtils {
 }
 ```
 
-Tests would be much easier to write if `Instant.now()` could be a fixed constant value. We could employ the usual tricks like passing in a `Clock`, storing it as a static variable with package-private visibility, or converting to an instance method, and so on.
+Tests would be much easier to write if `Instant.now()` could be a fixed constant value. We could employ the usual tricks like passing in a `Clock`, storing a `Clock` as a mutable static variable with package-private visibility, or converting the static method to an instance method, and so on.
 
 With static mocking, it's more straightforward:
 ```java
@@ -168,20 +198,21 @@ public class DateTimeUtilsTest {
                     .thenReturn(now);
 
             long expectedMillis = SECONDS.toMillis(20) + MINUTES.toMillis(30);
-            assertThat(DateTimeUtils.millisTillTomorrow()).isEqualTo(expectedMillis);
+            assertThat(DateTimeUtils.millisTillTomorrow())
+                    .isEqualTo(expectedMillis);
         }
     }
     
 }
 ```
 
-Note that we passed in `CALLS_REAL_METHODS` to `mockStatic()` so that all Instant static methods are mocked to call the real methods. That way, aside from the `now()` method we specifically mocked differently, all other Instant static methods are mocked so that they return real values instead of nulls. This is needed because, as it turns out, Instant _instance_ methods like `plus()` or `truncatedTo()` call Instant _static_ methods.
+Note that we passed in [`CALLS_REAL_METHODS`](https://javadoc.io/static/org.mockito/mockito-core/3.8.0/org/mockito/Answers.html#CALLS_REAL_METHODS) to `mockStatic()`. That way, all Instant static methods do in fact to call the real methods. Then, aside from the `now()` method we specifically mocked differently, all other Instant static methods behave normally and return real values. This is needed because, as it turns out, Instant _instance_ methods like `plus()` or `truncatedTo()` call Instant _static_ methods.
 
-Or, put simply: call `mockStatic(Foo.class)`. If you see strange exceptions, try `mockStatic(Foo.class, Answers.CALLS_REAL_METHODS)`
+Or, put simply: call `mockStatic(Foo.class)`. If you see strange (null pointer) exceptions, try `mockStatic(Foo.class, CALLS_REAL_METHODS)`
 
 ### Example Problem: java ManagementFactory
 
-As one last example on mocking static methods, suppose you want to calculate the idle cpu count, perhaps for sizing a ThreadPoolExecutor:
+As one last example on mocking static methods, suppose we want to calculate the idle cpu count, perhaps for dynamically sizing a ThreadPoolExecutor:
 ```java
 public class CpuUtils {
 
@@ -190,9 +221,6 @@ public class CpuUtils {
         double availableProcessors = operatingSystemMXBean.getAvailableProcessors();
         double averageLoad = operatingSystemMXBean.getSystemLoadAverage();
         int idleProcessors = (int) (availableProcessors - averageLoad);
-        if (idleProcessors <= 0) {
-            return 1;
-        }
         return idleProcessors <= 0 ? 1 : idleProcessors;
     }
 }
@@ -212,7 +240,8 @@ public class CpuUtilsTest {
             mocked.when(() -> ManagementFactory.getOperatingSystemMXBean())
                     .thenReturn(mockOsMxBean);
 
-            assertThat(CpuUtils.getIdleCpuCount()).isEqualTo(6);
+            assertThat(CpuUtils.getIdleCpuCount())
+                    .isEqualTo(6);
         }
     }
 
@@ -223,21 +252,27 @@ public class CpuUtilsTest {
 # Mocking Constructors
 Mocking constructors is slightly trickier but still follows the same pattern as mocking static methods:
 ```java
-assertEquals("originalRealValue", new Foo().method());
-try (MockedConstruction mocked = mockConstruction(Foo.class, this::stubFooWithBar)) {
-    String result = mySystemUnderTest.callNewFooMethod();
-    assertEquals(result, "bar");
+assertThat(new Foo().stringReturningInstanceMethod())
+        .isEqualTo("originalRealValue");
+try (MockedConstruction<Foo> mocked = mockConstruction(Foo.class, this::prepareFoo)) {
+    FooService fooService = new FooService();
+    String result = fooService.methodThatCallsNewFooInstanceMethod();
+    assertThat(result).isEqualTo("bar");
 
-    // (optional) verify mock Foo was called by MySystemUnderTest
-    Foo mockFoo = mocked.constructed().get(0);
-    verify(mockFoo).method();
+    // (optional) verify mock Foo was called by myFooService
+    Foo fooMock = mocked.constructed().get(0);
+    verify(fooMock).stringReturningInstanceMethod();
 }
-assertEquals("originalRealValue", new Foo().method());
+assertThat(new Foo().stringReturningInstanceMethod())
+        .isEqualTo("originalRealValue");
 ```
+... where `this::prepareFoo` is a callback that mocks Foo instances.
+
+Let's look at an example for clarity.
 
 ### Example Problem: java.util.Random
 
-Suppose we have a `DiceRoller` class and we want to mock out `new Random().nextInt()`:
+Suppose we have a DiceRoller class and we want to mock out `new Random().nextInt()`:
 
 ```java
 public class DiceRoller {
@@ -259,13 +294,13 @@ public class DiceRoller {
 }
 ```
 
-Here is how we can mock the constructor:
+Here is how we can mock the Random constructor:
 ```java
 public class DiceRollerTest {
 
     @Test
     public void testDiceRoll() {
-        try (MockedConstruction<Random> mocked = mockConstruction(Random.class, this::stubRandom)) {
+        try (MockedConstruction<Random> mocked = mockConstruction(Random.class, this::prepareRandom)) {
             DiceRoller dicerRoller = new DiceRoller();
             assertThat(dicerRoller.roll()).isEqualTo(6);
 
@@ -274,7 +309,7 @@ public class DiceRollerTest {
         }
     }
 
-    private void stubRandom(Random mockRandom, Context context) {
+    private void prepareRandom(Random mockRandom, Context context) {
         doReturn(5).when(mockRandom).nextInt(6);
     }
 }
