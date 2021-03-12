@@ -27,7 +27,9 @@ layout: default
   </header>
 
   <div class="post-content e-content" itemprop="articleBody">
-    {{ content }}
+    <!--{{ content }}-->
+
+    {% include anchor_headings.html html=content anchorBody="#" anchorClass="anchor" h_min=1 h_max=4 %}
   </div>
 
   {%- if site.disqus.shortname -%}
