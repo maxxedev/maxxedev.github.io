@@ -1,13 +1,13 @@
 ---
 layout: post
-title: "Mocking static methods and constructors with Mockito"
+title: "Mocking Static Methods and Constructors with Mockito"
 ---
 
 # Introduction
 
-From time to time, we find ourselves needing a way to mock out static methods or constructors when writing tests. This is usually accomplished by introducing a layer of indirection like strategy or factory pattern. Even if it may not be the right way for the purists, mockito's static/constructor mocking feature is a compelling alternative and a handy tool to keep in your toolbox.
+From time to time, we find ourselves needing a way to mock out static methods or constructors when writing tests. This is usually accomplished by introducing a layer of indirection like strategy or factory pattern.
 
-In this post, we will show you how to leverage the feature.
+Mockito's static/constructor mocking feature is a compelling alternative and a handy tool to keep in your toolbox, even if it may not be the right way for the purists. In this post, we will show you how to leverage it.
 
 Note that a similar feature has long been present in [PowerMock](https://github.com/powermock/powermock/wiki/Mockito#mocking-static-method), but mockito's design is arguably more convenient and easier-to-use.
 
@@ -23,8 +23,7 @@ Add [mockito-inline](https://search.maven.org/search?q=g:org.mockito%20AND%20a:m
     <scope>test</scope>
 </dependency>
 ```
-
-We will also add assertj and junit dependencies. See [pom.xml](https://github.com/maxxedev/mockito-example/blob/main/pom.xml) for complete example.
+We will also add assertj and junit dependencies. See [pom.xml](https://github.com/maxxedev/mockito-example/blob/main/pom.xml) for a complete example.
 
 # Mocking Static Methods
 To mock static methods on Foo class, simply call mockito's `mockStatic()` method:
@@ -153,14 +152,14 @@ public class EtcHostsUtilsTest {
 With this approach, we are able to keep the production `EtcHostsUtils` code simple without having to add hooks or abstractions just for testing.
 
 ### Default Values
-Recall that when mocking on instances, the all unmocked instance methods return default values:
+Recall that when mocking on instances, all unmocked instance methods return default values:
 ```java
 Foo fooInstance = mock(Foo.class);
 assertThat(fooInstance.stringReturningInstanceMethod()).isNull();
 assertThat(fooInstance.intReturningInstanceMethod()).isEqualTo(0);
 ```
 
-Note that static methods, when the class is static-mocked, show similar behavior:
+Note that when mocking static methods on a class, similar behavior applies:
 ```
 try (MockedStatic<Foo> mocked = mockStatic(Foo.class)) {
     assertThat(Foo.stringReturningStaticMethod()).isNull();
@@ -323,5 +322,4 @@ Immediately after `DiceRoller` calls `new Random()`, mockito calls our `stubRand
 You should now be able to see that how powerful static and constructor mocking can be. With great power, of course, comes great responsibility. Use it judiciously!
 
 The examples in this post are available on GitHub:
-
 - [https://github.com/maxxedev/mockito-example](https://github.com/maxxedev/mockito-example)
